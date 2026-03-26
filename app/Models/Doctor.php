@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Doctor extends Model
@@ -38,11 +39,16 @@ class Doctor extends Model
         return $this->hasMany(Slot::class);
     }
 
-    public function appointments(): HasMany
+    public function appointments(): HasManyThrough
     {
-        return $this->hasMany(Appointment::class, 'slot_id', 'id')
-                    ->join('slots', 'appointments.slot_id', '=', 'slots.id')
-                    ->where('slots.doctor_id', $this->id);
+        return $this->hasManyThrough(
+            Appointment::class,
+            Slot::class,
+            'doctor_id',
+            'slot_id',
+            'id',
+            'id',
+        );
     }
 
     // ── Scopes ─────────────────────────────────────────────────────────────

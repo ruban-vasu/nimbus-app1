@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AppointmentController;
+use App\Http\Controllers\ClinicController;
 use App\Http\Controllers\DoctorController;
 use App\Http\Controllers\PatientController;
 use Illuminate\Support\Facades\Route;
@@ -33,3 +34,7 @@ Route::get('/patients/{id}/appointments', [AppointmentController::class, 'patien
 
 Route::post('/patients/register-or-find', [PatientController::class, 'registerOrFind'])
     ->name('api.patients.register-or-find');
+
+Route::get('/clinics/{id}/dashboard', [ClinicController::class, 'dashboard'])
+    ->whereNumber('id')
+    ->name('api.clinics.dashboard');
