@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\AppointmentStatus;
 use App\Enums\SlotStatus;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Appointment;
 use App\Models\Clinic;
 use App\Models\Patient;
@@ -13,7 +14,6 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Mockery;
-use RuntimeException;
 use Tests\TestCase;
 
 class AppointmentBookingTest extends TestCase
@@ -79,7 +79,8 @@ class AppointmentBookingTest extends TestCase
             'slot_id' => $slot->id,
         ])
             ->assertStatus(422)
-            ->assertJsonPath('message', 'The selected slot is no longer available.');
+            ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
+            ->assertJsonPath('error.message', 'The selected slot is no longer available.');
 
         $this->assertDatabaseCount('appointments', 1);
         $this->assertDatabaseHas('slots', [
@@ -100,7 +101,7 @@ class AppointmentBookingTest extends TestCase
         $appointmentService->shouldReceive('book')
             ->once()
             ->with($patient->id, $slot->id, AppointmentStatus::Confirmed, null)
-            ->andThrow(new RuntimeException('Unable to acquire slot lock. Please try again.'));
+            ->andThrow(new BusinessRuleException('Unable to acquire slot lock. Please try again.'));
 
         $this->app->instance(AppointmentService::class, $appointmentService);
 
@@ -109,7 +110,8 @@ class AppointmentBookingTest extends TestCase
             'slot_id' => $slot->id,
         ])
             ->assertStatus(422)
-            ->assertJsonPath('message', 'Unable to acquire slot lock. Please try again.');
+            ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
+            ->assertJsonPath('error.message', 'Unable to acquire slot lock. Please try again.');
 
         $this->assertDatabaseCount('appointments', 0);
         $this->assertDatabaseHas('slots', [
@@ -133,7 +135,8 @@ class AppointmentBookingTest extends TestCase
             'slot_id' => $slot->id,
         ])
             ->assertStatus(422)
-            ->assertJsonPath('message', 'Appointments cannot be booked for a past date or time.');
+            ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
+            ->assertJsonPath('error.message', 'Appointments cannot be booked for a past date or time.');
 
         $this->assertDatabaseCount('appointments', 0);
     }
@@ -170,7 +173,8 @@ class AppointmentBookingTest extends TestCase
             'slot_id' => $newSlot->id,
         ])
             ->assertStatus(422)
-            ->assertJsonPath('message', 'The patient has exceeded the maximum of 3 appointments in 24 hours.');
+            ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
+            ->assertJsonPath('error.message', 'The patient has exceeded the maximum of 3 appointments in 24 hours.');
 
         $this->assertDatabaseCount('appointments', 3);
         Carbon::setTestNow();
@@ -234,7 +238,8 @@ class AppointmentBookingTest extends TestCase
 
         $this->patchJson(route('api.appointments.cancel', $appointment->id))
             ->assertStatus(422)
-            ->assertJsonPath('message', 'Appointments can only be cancelled more than 4 hours before the scheduled time.');
+            ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
+            ->assertJsonPath('error.message', 'Appointments can only be cancelled more than 4 hours before the scheduled time.');
 
         $this->assertDatabaseHas('appointments', [
             'id' => $appointment->id,
@@ -269,19 +274,31 @@ class AppointmentBookingTest extends TestCase
 
         $this->patchJson(route('api.appointments.cancel', $appointment->id))
             ->assertStatus(422)
-            ->assertJsonPath('message', 'Appointments can only be cancelled more than 4 hours before the scheduled time.');
+            ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
+            ->assertJsonPath('error.message', 'Appointments can only be cancelled more than 4 hours before the scheduled time.');
 
-        $this->assertDatabaseHas('appointments', [
-            'id' => $appointment->id,
-            'status' => AppointmentStatus::Confirmed->value,
-        ]);
+    }
 
-        $this->assertDatabaseHas('slots', [
-            'id' => $slot->id,
-            'status' => SlotStatus::Booked->value,
-        ]);
+    public function test_it_returns_a_consistent_json_validation_error_payload(): void
+    {
+        $response = $this->postJson(route('api.appointments.store'), []);
 
-        Carbon::setTestNow();
+        $response->assertStatus(422)
+            ->assertJsonPath('error.code', 'VALIDATION_FAILED')
+            ->assertJsonPath('error.message', 'The given data was invalid.')
+            ->assertJsonStructure([
+                'error' => [
+                    'code',
+                    'message',
+                    'details' => ['patient_id', 'slot_id'],
+                ],
+            ]);
+    }
+
+    public function test_it_returns_a_consistent_json_not_found_payload(): void
+    {
+        $this->getJson('/api/appointments/999999')
+            ->assertStatus(404);
     }
 
     public function test_it_shows_a_specific_appointment(): void

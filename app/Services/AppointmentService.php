@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\AppointmentStatus;
 use App\Enums\SlotStatus;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Appointment;
 use App\Models\Patient;
 use App\Models\Slot;
@@ -12,7 +13,6 @@ use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
-use RuntimeException;
 
 class AppointmentService
 {
@@ -46,19 +46,19 @@ class AppointmentService
                         ->firstOrFail();
 
                     if ($this->isPastSlot($slot)) {
-                        throw new RuntimeException('Appointments cannot be booked for a past date or time.');
+                        throw new BusinessRuleException('Appointments cannot be booked for a past date or time.');
                     }
 
                     if ($slot->status !== SlotStatus::Available) {
-                        throw new RuntimeException('The selected slot is no longer available.');
+                        throw new BusinessRuleException('The selected slot is no longer available.');
                     }
 
                     if ($slot->appointment()->exists()) {
-                        throw new RuntimeException('The selected slot has already been booked.');
+                        throw new BusinessRuleException('The selected slot has already been booked.');
                     }
 
                     if ($this->hasExceededBookingLimit($patient)) {
-                        throw new RuntimeException('The patient has exceeded the maximum of 3 appointments in 24 hours.');
+                        throw new BusinessRuleException('The patient has exceeded the maximum of 3 appointments in 24 hours.');
                     }
 
                     $appointment = Appointment::query()->create([
@@ -76,7 +76,7 @@ class AppointmentService
                 });
             });
         } catch (LockTimeoutException) {
-            throw new RuntimeException('Unable to acquire slot lock. Please try again.');
+            throw new BusinessRuleException('Unable to acquire slot lock. Please try again.');
         }
     }
 
@@ -90,15 +90,15 @@ class AppointmentService
                 ->firstOrFail();
 
             if (! $appointment->status->isCancellable()) {
-                throw new RuntimeException('This appointment cannot be cancelled.');
+                throw new BusinessRuleException('This appointment cannot be cancelled.');
             }
 
             if (! $appointment->slot) {
-                throw new RuntimeException('The appointment slot could not be found.');
+                throw new BusinessRuleException('The appointment slot could not be found.');
             }
 
             if (! $this->isCancellableMoreThanFourHoursAway($appointment->slot)) {
-                throw new RuntimeException('Appointments can only be cancelled more than 4 hours before the scheduled time.');
+                throw new BusinessRuleException('Appointments can only be cancelled more than 4 hours before the scheduled time.');
             }
 
             $appointment->update([

@@ -10,7 +10,6 @@ use App\Services\AppointmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use RuntimeException;
 
 class AppointmentController extends Controller
 {
@@ -32,39 +31,27 @@ class AppointmentController extends Controller
             'notes' => ['nullable', 'string'],
         ]);
 
-        try {
-            $appointment = $appointmentService->book(
-                patientId: $validated['patient_id'],
-                slotId: $validated['slot_id'],
-                status: isset($validated['status'])
-                    ? AppointmentStatus::from($validated['status'])
-                    : AppointmentStatus::Confirmed,
-                notes: $validated['notes'] ?? null,
-            );
+        $appointment = $appointmentService->book(
+            patientId: $validated['patient_id'],
+            slotId: $validated['slot_id'],
+            status: isset($validated['status'])
+                ? AppointmentStatus::from($validated['status'])
+                : AppointmentStatus::Confirmed,
+            notes: $validated['notes'] ?? null,
+        );
 
-            return (new AppointmentResource($appointment))
-                ->response()
-                ->setStatusCode(201);
-        } catch (RuntimeException $exception) {
-            return response()->json([
-                'message' => $exception->getMessage(),
-            ], 422);
-        }
+        return (new AppointmentResource($appointment))
+            ->response()
+            ->setStatusCode(201);
     }
 
     public function cancel(int $id, AppointmentService $appointmentService): JsonResponse
     {
-        try {
-            $appointment = $appointmentService->cancel($id);
+        $appointment = $appointmentService->cancel($id);
 
-            return (new AppointmentResource($appointment))
-                ->response()
-                ->setStatusCode(200);
-        } catch (RuntimeException $exception) {
-            return response()->json([
-                'message' => $exception->getMessage(),
-            ], 422);
-        }
+        return (new AppointmentResource($appointment))
+            ->response()
+            ->setStatusCode(200);
     }
 
     public function patientAppointments(Request $request, int $id)
