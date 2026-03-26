@@ -143,6 +143,10 @@ class AppointmentService
     protected function hasExceededBookingLimit(Patient $patient): bool
     {
         return $patient->appointments()
+            ->whereIn('status', [
+                AppointmentStatus::Pending,
+                AppointmentStatus::Confirmed,
+            ])
             ->where('created_at', '>=', now()->subDay())
             ->count() >= 3;
     }

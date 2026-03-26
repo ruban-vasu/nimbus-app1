@@ -180,6 +180,67 @@ class AppointmentBookingTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_it_does_not_count_completed_or_cancelled_appointments_toward_the_24_hour_booking_limit(): void
+    {
+        Carbon::setTestNow(now());
+
+        $doctor = $this->createDoctor();
+        $patient = Patient::factory()->create();
+
+        $terminalSlots = Slot::factory(3)->forDoctor($doctor->id)->create([
+            'date' => now()->addDay()->toDateString(),
+            'status' => SlotStatus::Booked,
+        ]);
+
+        Appointment::factory()->create([
+            'patient_id' => $patient->id,
+            'slot_id' => $terminalSlots[0]->id,
+            'status' => AppointmentStatus::Completed,
+            'created_at' => now()->subHours(2),
+            'updated_at' => now()->subHours(2),
+        ]);
+
+        Appointment::factory()->create([
+            'patient_id' => $patient->id,
+            'slot_id' => $terminalSlots[1]->id,
+            'status' => AppointmentStatus::Cancelled,
+            'created_at' => now()->subHours(3),
+            'updated_at' => now()->subHours(3),
+        ]);
+
+        Appointment::factory()->create([
+            'patient_id' => $patient->id,
+            'slot_id' => $terminalSlots[2]->id,
+            'status' => AppointmentStatus::Pending,
+            'created_at' => now()->subHours(4),
+            'updated_at' => now()->subHours(4),
+        ]);
+
+        $bookableSlot = Slot::factory()->forDoctor($doctor->id)->create([
+            'date' => now()->addDay()->toDateString(),
+            'status' => SlotStatus::Available,
+        ]);
+
+        $response = $this->postJson(route('api.appointments.store'), [
+            'patient_id' => $patient->id,
+            'slot_id' => $bookableSlot->id,
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.patient_id', $patient->id)
+            ->assertJsonPath('data.slot_id', $bookableSlot->id)
+            ->assertJsonPath('data.status', AppointmentStatus::Confirmed->value);
+
+        $this->assertDatabaseCount('appointments', 4);
+        $this->assertDatabaseHas('appointments', [
+            'patient_id' => $patient->id,
+            'slot_id' => $bookableSlot->id,
+            'status' => AppointmentStatus::Confirmed->value,
+        ]);
+
+        Carbon::setTestNow();
+    }
+
     public function test_it_cancels_an_appointment_more_than_four_hours_before_start_time(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-03-26 08:00:00'));
