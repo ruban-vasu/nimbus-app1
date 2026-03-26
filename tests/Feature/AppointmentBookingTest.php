@@ -8,9 +8,12 @@ use App\Models\Appointment;
 use App\Models\Clinic;
 use App\Models\Patient;
 use App\Models\Slot;
+use App\Services\AppointmentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
+use Mockery;
+use RuntimeException;
 use Tests\TestCase;
 
 class AppointmentBookingTest extends TestCase
@@ -82,6 +85,36 @@ class AppointmentBookingTest extends TestCase
         $this->assertDatabaseHas('slots', [
             'id' => $slot->id,
             'status' => SlotStatus::Booked->value,
+        ]);
+    }
+
+    public function test_it_surfaces_lock_contention_during_concurrent_booking_flow(): void
+    {
+        $patient = Patient::factory()->create();
+        $slot = Slot::factory()->forDoctor($this->createDoctor()->id)->create([
+            'date' => now()->addDay()->toDateString(),
+            'status' => SlotStatus::Available,
+        ]);
+
+        $appointmentService = Mockery::mock(AppointmentService::class);
+        $appointmentService->shouldReceive('book')
+            ->once()
+            ->with($patient->id, $slot->id, AppointmentStatus::Confirmed, null)
+            ->andThrow(new RuntimeException('Unable to acquire slot lock. Please try again.'));
+
+        $this->app->instance(AppointmentService::class, $appointmentService);
+
+        $this->postJson(route('api.appointments.store'), [
+            'patient_id' => $patient->id,
+            'slot_id' => $slot->id,
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Unable to acquire slot lock. Please try again.');
+
+        $this->assertDatabaseCount('appointments', 0);
+        $this->assertDatabaseHas('slots', [
+            'id' => $slot->id,
+            'status' => SlotStatus::Available->value,
         ]);
     }
 
@@ -184,6 +217,41 @@ class AppointmentBookingTest extends TestCase
     public function test_it_rejects_cancellation_within_four_hours_of_start_time(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-03-26 10:30:00'));
+
+        $patient = Patient::factory()->create();
+        $slot = Slot::factory()->forDoctor($this->createDoctor()->id)->create([
+            'date' => '2026-03-26',
+            'start_time' => '13:30:00',
+            'end_time' => '14:00:00',
+            'status' => SlotStatus::Booked,
+        ]);
+
+        $appointment = Appointment::factory()->create([
+            'patient_id' => $patient->id,
+            'slot_id' => $slot->id,
+            'status' => AppointmentStatus::Confirmed,
+        ]);
+
+        $this->patchJson(route('api.appointments.cancel', $appointment->id))
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Appointments can only be cancelled more than 4 hours before the scheduled time.');
+
+        $this->assertDatabaseHas('appointments', [
+            'id' => $appointment->id,
+            'status' => AppointmentStatus::Confirmed->value,
+        ]);
+
+        $this->assertDatabaseHas('slots', [
+            'id' => $slot->id,
+            'status' => SlotStatus::Booked->value,
+        ]);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_it_rejects_cancellation_exactly_four_hours_before_start_time(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-03-26 09:30:00'));
 
         $patient = Patient::factory()->create();
         $slot = Slot::factory()->forDoctor($this->createDoctor()->id)->create([
