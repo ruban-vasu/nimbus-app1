@@ -3,13 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Enums\AppointmentStatus;
+use App\Http\Requests\CancelAppointmentRequest;
+use App\Http\Requests\StoreAppointmentRequest;
 use App\Http\Resources\AppointmentResource;
 use App\Models\Appointment;
 use App\Models\Patient;
 use App\Services\AppointmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 
 class AppointmentController extends Controller
 {
@@ -22,14 +23,9 @@ class AppointmentController extends Controller
         return new AppointmentResource($appointment);
     }
 
-    public function store(Request $request, AppointmentService $appointmentService): JsonResponse
+    public function store(StoreAppointmentRequest $request, AppointmentService $appointmentService): JsonResponse
     {
-        $validated = $request->validate([
-            'patient_id' => ['required', 'integer', 'exists:patients,id'],
-            'slot_id' => ['required', 'integer', 'exists:slots,id'],
-            'status' => ['nullable', 'string', Rule::in(AppointmentStatus::values())],
-            'notes' => ['nullable', 'string'],
-        ]);
+        $validated = $request->validated();
 
         $appointment = $appointmentService->book(
             patientId: $validated['patient_id'],
@@ -45,7 +41,7 @@ class AppointmentController extends Controller
             ->setStatusCode(201);
     }
 
-    public function cancel(int $id, AppointmentService $appointmentService): JsonResponse
+    public function cancel(CancelAppointmentRequest $request, int $id, AppointmentService $appointmentService): JsonResponse
     {
         $appointment = $appointmentService->cancel($id);
 

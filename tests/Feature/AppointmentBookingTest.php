@@ -78,7 +78,7 @@ class AppointmentBookingTest extends TestCase
             'patient_id' => $secondPatient->id,
             'slot_id' => $slot->id,
         ])
-            ->assertStatus(422)
+            ->assertStatus(409)
             ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
             ->assertJsonPath('error.message', 'The selected slot is no longer available.');
 
@@ -109,7 +109,7 @@ class AppointmentBookingTest extends TestCase
             'patient_id' => $patient->id,
             'slot_id' => $slot->id,
         ])
-            ->assertStatus(422)
+            ->assertStatus(409)
             ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
             ->assertJsonPath('error.message', 'Unable to acquire slot lock. Please try again.');
 

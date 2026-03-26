@@ -56,11 +56,17 @@ return Application::configure(basePath: dirname(__DIR__))
                 return null;
             }
 
+            $status = str_contains(strtolower($exception->getMessage()), 'no longer available')
+                || str_contains(strtolower($exception->getMessage()), 'already been booked')
+                || str_contains(strtolower($exception->getMessage()), 'acquire slot lock')
+                ? 409
+                : 422;
+
             return response()->json([
                 'error' => [
                     'code' => 'BUSINESS_RULE_VIOLATION',
                     'message' => $exception->getMessage(),
                 ],
-            ], 422);
+            ], $status);
         });
     })->create();

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\GenerateDoctorSlotsRequest;
 use App\Http\Resources\DoctorResource;
 use App\Http\Resources\SlotResource;
 use App\Models\Doctor;
@@ -69,17 +70,9 @@ class DoctorController extends Controller
         return SlotResource::collection($slots);
     }
 
-    public function generateSlots(Request $request, int $id): JsonResponse
+    public function generateSlots(GenerateDoctorSlotsRequest $request, int $id): JsonResponse
     {
-        $validated = $request->validate([
-            'start_date' => ['required', 'date', 'after_or_equal:today'],
-            'end_date' => ['required', 'date', 'after_or_equal:start_date'],
-            'slot_duration' => ['nullable', 'integer', 'in:15,20,30,45,60'],
-            'morning_start' => ['nullable', 'date_format:H:i'],
-            'morning_end' => ['nullable', 'date_format:H:i'],
-            'afternoon_start' => ['nullable', 'date_format:H:i'],
-            'afternoon_end' => ['nullable', 'date_format:H:i'],
-        ]);
+        $validated = $request->validated();
 
         $doctor = Doctor::query()->findOrFail($id);
         $slotDuration = $validated['slot_duration'] ?? 30;
@@ -137,9 +130,11 @@ class DoctorController extends Controller
         }
 
         return response()->json([
-            'message' => 'Slots generated successfully.',
-            'count' => count($createdSlots),
             'data' => SlotResource::collection(collect($createdSlots))->resolve(),
+            'meta' => [
+                'message' => 'Slots generated successfully.',
+                'count' => count($createdSlots),
+            ],
         ], 201);
     }
 }

@@ -107,8 +107,8 @@ class DoctorApiTest extends TestCase
         ]);
 
         $response->assertCreated()
-            ->assertJsonPath('message', 'Slots generated successfully.')
-            ->assertJsonPath('count', 8)
+            ->assertJsonPath('meta.message', 'Slots generated successfully.')
+            ->assertJsonPath('meta.count', 8)
             ->assertJsonCount(8, 'data');
 
         $this->assertDatabaseCount('slots', 8);
@@ -149,7 +149,7 @@ class DoctorApiTest extends TestCase
         ]);
 
         $response->assertCreated()
-            ->assertJsonPath('count', 2);
+            ->assertJsonPath('meta.count', 2);
 
         $this->assertDatabaseHas('slots', [
             'doctor_id' => $doctor->id,

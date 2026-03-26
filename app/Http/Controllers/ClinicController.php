@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Enums\AppointmentStatus;
 use App\Enums\SlotStatus;
+use App\Http\Resources\ClinicDashboardResource;
 use App\Http\Resources\SlotResource;
 use App\Models\Appointment;
 use App\Models\Clinic;
@@ -13,7 +14,7 @@ use Illuminate\Support\Carbon;
 
 class ClinicController extends Controller
 {
-    public function dashboard(int $id): JsonResponse
+    public function dashboard(int $id): ClinicDashboardResource
     {
         $clinic = Clinic::query()->findOrFail($id);
 
@@ -74,25 +75,23 @@ class ClinicController extends Controller
             ->limit(10)
             ->get();
 
-        return response()->json([
-            'data' => [
-                'clinic' => [
-                    'id' => $clinic->id,
-                    'name' => $clinic->name,
-                    'phone' => $clinic->phone,
-                ],
-                'today' => $today->toDateString(),
-                'stats' => [
-                    'doctor_count' => $doctorIds->count(),
-                    'today_slots' => $todaySlots,
-                    'available_today_slots' => $availableTodaySlots,
-                    'booked_today_slots' => $bookedTodaySlots,
-                    'blocked_today_slots' => $blockedTodaySlots,
-                    'today_appointments' => $todayAppointments,
-                    'confirmed_today_appointments' => $confirmedTodayAppointments,
-                ],
-                'upcoming_slots' => SlotResource::collection($upcomingSlots)->resolve(),
+        return new ClinicDashboardResource([
+            'clinic' => [
+                'id' => $clinic->id,
+                'name' => $clinic->name,
+                'phone' => $clinic->phone,
             ],
+            'today' => $today->toDateString(),
+            'stats' => [
+                'doctor_count' => $doctorIds->count(),
+                'today_slots' => $todaySlots,
+                'available_today_slots' => $availableTodaySlots,
+                'booked_today_slots' => $bookedTodaySlots,
+                'blocked_today_slots' => $blockedTodaySlots,
+                'today_appointments' => $todayAppointments,
+                'confirmed_today_appointments' => $confirmedTodayAppointments,
+            ],
+            'upcoming_slots' => $upcomingSlots,
         ]);
     }
 }
