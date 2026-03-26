@@ -33,6 +33,9 @@ class PatientController extends Controller
                 'id' => $patient->id,
                 'name' => $patient->name,
                 'email' => $patient->email,
+                'phone' => $patient->phone,
+                'date_of_birth' => $patient->date_of_birth?->toDateString(),
+                'insurance_provider' => $patient->insurance_provider,
             ],
         ]);
     }

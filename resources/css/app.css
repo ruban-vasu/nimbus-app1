@@ -20,6 +20,4 @@ input,
 select,
 textarea {
     font: inherit;
-}@tailwind base;
-@tailwind components;
-@tailwind utilities;
+}

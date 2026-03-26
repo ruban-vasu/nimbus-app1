@@ -40,6 +40,47 @@ type AppointmentResponse = {
     };
 };
 
+type PatientLookupResponse = {
+    data: {
+        id: number;
+        name: string;
+        email: string;
+        phone: string;
+        date_of_birth: string;
+        insurance_provider: string | null;
+    };
+};
+
+type PatientAppointment = {
+    id: number;
+    status: string;
+    notes: string | null;
+    patient: {
+        id: number;
+        name: string;
+        email: string;
+        phone: string;
+    };
+    slot: {
+        id: number;
+        doctor_id: number;
+        date: string;
+        start_time: string;
+        end_time: string;
+        duration: number;
+        status: string;
+        doctor?: {
+            id: number;
+            name: string;
+            specialization: string;
+            clinic?: {
+                id: number | null;
+                name: string | null;
+            };
+        };
+    };
+};
+
 type Notice = {
     type: 'success' | 'error';
     message: string;
@@ -69,6 +110,10 @@ export function App() {
     const [insuranceProvider, setInsuranceProvider] = useState('');
     const [booking, setBooking] = useState(false);
     const [notice, setNotice] = useState<Notice | null>(null);
+    const [patientId, setPatientId] = useState<number | null>(null);
+    const [patientAppointments, setPatientAppointments] = useState<PatientAppointment[]>([]);
+    const [loadingAppointments, setLoadingAppointments] = useState(false);
+    const [cancellingAppointmentId, setCancellingAppointmentId] = useState<number | null>(null);
 
     const selectedSlot = useMemo(
         () => slots.find((slot) => slot.id === selectedSlotId) ?? null,
@@ -154,7 +199,7 @@ export function App() {
         setNotice(null);
 
         try {
-            const patientResponse = await axios.post('/api/patients/register-or-find', {
+            const patientResponse = await axios.post<PatientLookupResponse>('/api/patients/register-or-find', {
                 name: patientName,
                 email: patientEmail,
                 phone: patientPhone,
@@ -163,6 +208,7 @@ export function App() {
             });
 
             const patientId = patientResponse.data.data.id as number;
+            setPatientId(patientId);
 
             const appointmentResponse = await axios.post<AppointmentResponse>('/api/appointments', {
                 patient_id: patientId,
@@ -176,12 +222,92 @@ export function App() {
                 message: `Appointment #${appointmentResponse.data.data.id} booked successfully.`,
             });
 
+            await fetchPatientAppointments(patientId);
             await fetchSlots(selectedDoctor!.id);
             setSelectedSlotId(null);
         } catch (error) {
             setNotice({ type: 'error', message: extractError(error, 'Unable to book appointment.') });
         } finally {
             setBooking(false);
+        }
+    }
+
+    async function fetchPatientAppointments(lookupPatientId?: number) {
+        const targetPatientId = lookupPatientId ?? patientId;
+
+        if (!targetPatientId) {
+            setNotice({ type: 'error', message: 'Register or find a patient before loading appointments.' });
+            return;
+        }
+
+        setLoadingAppointments(true);
+
+        try {
+            const response = await axios.get<PaginatedResponse<PatientAppointment>>(
+                `/api/patients/${targetPatientId}/appointments`,
+                {
+                    params: {
+                        per_page: 20,
+                    },
+                }
+            );
+
+            setPatientAppointments(response.data.data);
+        } catch (error) {
+            setNotice({ type: 'error', message: extractError(error, 'Unable to load patient appointments.') });
+        } finally {
+            setLoadingAppointments(false);
+        }
+    }
+
+    async function handleLoadAppointments(event: FormEvent) {
+        event.preventDefault();
+        setNotice(null);
+
+        try {
+            const patientResponse = await axios.post<PatientLookupResponse>('/api/patients/register-or-find', {
+                name: patientName,
+                email: patientEmail,
+                phone: patientPhone,
+                date_of_birth: patientDob,
+                insurance_provider: insuranceProvider || null,
+            });
+
+            const patient = patientResponse.data.data;
+
+            setPatientId(patient.id);
+            setPatientName(patient.name);
+            setPatientEmail(patient.email);
+            setPatientPhone(patient.phone);
+            setPatientDob(patient.date_of_birth);
+            setInsuranceProvider(patient.insurance_provider ?? '');
+
+            await fetchPatientAppointments(patient.id);
+        } catch (error) {
+            setNotice({ type: 'error', message: extractError(error, 'Unable to load patient record.') });
+        }
+    }
+
+    async function handleCancelAppointment(appointmentId: number) {
+        setCancellingAppointmentId(appointmentId);
+        setNotice(null);
+
+        try {
+            await axios.patch(`/api/appointments/${appointmentId}/cancel`);
+            await fetchPatientAppointments();
+
+            if (selectedDoctor) {
+                await fetchSlots(selectedDoctor.id);
+            }
+
+            setNotice({
+                type: 'success',
+                message: `Appointment #${appointmentId} cancelled successfully.`,
+            });
+        } catch (error) {
+            setNotice({ type: 'error', message: extractError(error, 'Unable to cancel appointment.') });
+        } finally {
+            setCancellingAppointmentId(null);
         }
     }
 
@@ -381,22 +507,23 @@ export function App() {
                         </div>
                     </section>
 
-                    <aside className="rounded-[28px] border border-white/40 bg-white/80 p-5 shadow-[0_18px_65px_rgba(45,62,80,0.12)] backdrop-blur">
-                        <h2 className="font-serif text-2xl font-semibold">Book Appointment</h2>
-                        <p className="mt-2 text-sm text-slate-600">
-                            Enter patient details and confirm the selected slot.
-                        </p>
+                    <aside className="space-y-6">
+                        <div className="rounded-[28px] border border-white/40 bg-white/80 p-5 shadow-[0_18px_65px_rgba(45,62,80,0.12)] backdrop-blur">
+                            <h2 className="font-serif text-2xl font-semibold">Book Appointment</h2>
+                            <p className="mt-2 text-sm text-slate-600">
+                                Enter patient details and confirm the selected slot.
+                            </p>
 
-                        <div className="mt-5 rounded-2xl bg-slate-900 px-4 py-4 text-sm text-white">
-                            <div className="font-semibold">Selected doctor</div>
-                            <div className="mt-1 text-white/80">{selectedDoctor ? selectedDoctor.name : 'None selected'}</div>
-                            <div className="mt-4 font-semibold">Selected slot</div>
-                            <div className="mt-1 text-white/80">
-                                {selectedSlot ? `${selectedSlot.date} ${selectedSlot.start_time} - ${selectedSlot.end_time}` : 'None selected'}
+                            <div className="mt-5 rounded-2xl bg-slate-900 px-4 py-4 text-sm text-white">
+                                <div className="font-semibold">Selected doctor</div>
+                                <div className="mt-1 text-white/80">{selectedDoctor ? selectedDoctor.name : 'None selected'}</div>
+                                <div className="mt-4 font-semibold">Selected slot</div>
+                                <div className="mt-1 text-white/80">
+                                    {selectedSlot ? `${selectedSlot.date} ${selectedSlot.start_time} - ${selectedSlot.end_time}` : 'None selected'}
+                                </div>
                             </div>
-                        </div>
 
-                        <form className="mt-5 space-y-3" onSubmit={handleBookAppointment}>
+                            <form className="mt-5 space-y-3" onSubmit={handleBookAppointment}>
                             <input
                                 required
                                 className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-emerald-400"
@@ -440,7 +567,91 @@ export function App() {
                             >
                                 {booking ? 'Booking...' : 'Book Appointment'}
                             </button>
-                        </form>
+
+                            <button
+                                type="button"
+                                className="w-full rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-700 transition hover:bg-slate-100"
+                                onClick={() => void fetchPatientAppointments()}
+                            >
+                                Refresh My Appointments
+                            </button>
+                            </form>
+                        </div>
+
+                        <div className="rounded-[28px] border border-white/40 bg-white/80 p-5 shadow-[0_18px_65px_rgba(45,62,80,0.12)] backdrop-blur">
+                            <h2 className="font-serif text-2xl font-semibold">My Appointments</h2>
+                            <p className="mt-2 text-sm text-slate-600">
+                                Use the patient details above to load appointment history and cancel eligible upcoming bookings.
+                            </p>
+
+                            <form className="mt-5" onSubmit={handleLoadAppointments}>
+                                <button
+                                    type="submit"
+                                    className="w-full rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white transition hover:bg-slate-700"
+                                >
+                                    Load My Appointments
+                                </button>
+                            </form>
+
+                            <div className="mt-5 space-y-3">
+                                {loadingAppointments ? (
+                                    <p className="text-sm text-slate-600">Loading appointments...</p>
+                                ) : patientAppointments.length === 0 ? (
+                                    <p className="rounded-xl border border-dashed border-slate-300 px-4 py-5 text-sm text-slate-600">
+                                        No appointments loaded yet.
+                                    </p>
+                                ) : (
+                                    patientAppointments.map((appointment) => {
+                                        const cancellable = ['pending', 'confirmed'].includes(appointment.status);
+
+                                        return (
+                                            <div
+                                                key={appointment.id}
+                                                className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <div className="font-semibold text-slate-900">Appointment #{appointment.id}</div>
+                                                        <div className="text-sm text-slate-600">
+                                                            {appointment.slot.date} {appointment.slot.start_time} - {appointment.slot.end_time}
+                                                        </div>
+                                                        <div className="mt-1 text-sm text-slate-600">
+                                                            Dr. {appointment.slot.doctor?.name ?? 'Assigned doctor'}
+                                                            {appointment.slot.doctor?.specialization ? `, ${appointment.slot.doctor.specialization}` : ''}
+                                                        </div>
+                                                        <div className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-500">
+                                                            {appointment.slot.doctor?.clinic?.name ?? 'Clinic'}
+                                                        </div>
+                                                    </div>
+                                                    <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-white">
+                                                        {appointment.status}
+                                                    </span>
+                                                </div>
+
+                                                {appointment.notes && (
+                                                    <p className="mt-3 text-sm text-slate-600">{appointment.notes}</p>
+                                                )}
+
+                                                <div className="mt-4 flex justify-end">
+                                                    <button
+                                                        type="button"
+                                                        disabled={!cancellable || cancellingAppointmentId === appointment.id}
+                                                        className="rounded-xl border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                        onClick={() => void handleCancelAppointment(appointment.id)}
+                                                    >
+                                                        {cancellingAppointmentId === appointment.id
+                                                            ? 'Cancelling...'
+                                                            : cancellable
+                                                              ? 'Cancel Appointment'
+                                                              : 'Not Cancellable'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        </div>
                     </aside>
                 </div>
             </div>
@@ -450,7 +661,14 @@ export function App() {
 
 function extractError(error: unknown, fallback: string) {
     if (axios.isAxiosError(error)) {
-        return (error.response?.data as { message?: string } | undefined)?.message ?? fallback;
+        const data = error.response?.data as
+            | {
+                  message?: string;
+                  error?: { message?: string };
+              }
+            | undefined;
+
+        return data?.error?.message ?? data?.message ?? fallback;
     }
 
     return fallback;
