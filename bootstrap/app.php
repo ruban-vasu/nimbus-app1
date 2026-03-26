@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use App\Providers\EventServiceProvider;
 use App\Exceptions\BusinessRuleException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
@@ -19,6 +20,9 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         //
     })
+    ->withProviders([
+        EventServiceProvider::class,
+    ])
     ->withExceptions(function (Exceptions $exceptions) {
         $shouldRenderJson = static function (Request $request): bool {
             return $request->is('api/*') || $request->expectsJson();

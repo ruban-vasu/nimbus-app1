@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Enums\AppointmentStatus;
 use App\Enums\SlotStatus;
+use App\Events\AppointmentBooked;
+use App\Events\AppointmentCancelled;
 use App\Exceptions\BusinessRuleException;
 use App\Models\Appointment;
 use App\Models\Patient;
@@ -24,12 +26,13 @@ class AppointmentService
     /**
      * Book a slot for a patient.
      *
-     * The flow is intentionally defensive:
-     * 1. Acquire a Redis lock scoped to the slot ID.
-     * 2. Start a database transaction.
-     * 3. Re-read the slot with a DB row lock.
-     * 4. Create the appointment.
-     * 5. Mark the slot as booked.
+        * Locking strategy:
+        * We combine a Redis cache lock with a database transaction and row-level lock.
+        * The Redis lock prevents two app nodes from processing the same slot at once,
+        * while lockForUpdate() protects correctness at the database level inside the
+        * transaction. This costs a little more latency and operational complexity than
+        * using only one mechanism, but it gives strong protection against double-booking
+        * under concurrent requests and across horizontally scaled workers.
      */
     public function book(int $patientId, int $slotId, AppointmentStatus $status = AppointmentStatus::Confirmed, ?string $notes = null): Appointment
     {
@@ -58,7 +61,11 @@ class AppointmentService
                     }
 
                     if ($this->hasExceededBookingLimit($patient)) {
-                        throw new BusinessRuleException('The patient has exceeded the maximum of 3 appointments in 24 hours.');
+                        throw new BusinessRuleException('The patient already has the maximum of 3 upcoming appointments.');
+                    }
+
+                    if ($this->hasOverlappingAppointment($patient, $slot)) {
+                        throw new BusinessRuleException('The patient already has an overlapping appointment.');
                     }
 
                     $appointment = Appointment::query()->create([
@@ -72,7 +79,11 @@ class AppointmentService
                         'status' => SlotStatus::Booked,
                     ]);
 
-                    return $appointment->fresh(['patient', 'slot']);
+                    $appointment = $appointment->fresh(['patient', 'slot.doctor']);
+
+                    AppointmentBooked::dispatch($appointment);
+
+                    return $appointment;
                 });
             });
         } catch (LockTimeoutException) {
@@ -109,7 +120,11 @@ class AppointmentService
                 'status' => SlotStatus::Available,
             ]);
 
-            return $appointment->fresh(['patient', 'slot']);
+            $appointment = $appointment->fresh(['patient', 'slot.doctor']);
+
+            AppointmentCancelled::dispatch($appointment);
+
+            return $appointment;
         });
     }
 
@@ -147,8 +162,31 @@ class AppointmentService
                 AppointmentStatus::Pending,
                 AppointmentStatus::Confirmed,
             ])
-            ->where('created_at', '>=', now()->subDay())
+            ->whereHas('slot', function ($query) {
+                $query->where(function ($slotQuery) {
+                    $slotQuery->whereDate('date', '>', now()->toDateString())
+                        ->orWhere(function ($sameDayQuery) {
+                            $sameDayQuery->whereDate('date', now()->toDateString())
+                                ->where('start_time', '>=', now()->format('H:i:s'));
+                        });
+                });
+            })
             ->count() >= 3;
+    }
+
+    protected function hasOverlappingAppointment(Patient $patient, Slot $slot): bool
+    {
+        return $patient->appointments()
+            ->whereIn('status', [
+                AppointmentStatus::Pending,
+                AppointmentStatus::Confirmed,
+            ])
+            ->whereHas('slot', function ($query) use ($slot) {
+                $query->whereDate('date', $slot->date->toDateString())
+                    ->where('start_time', '<', $slot->end_time)
+                    ->where('end_time', '>', $slot->start_time);
+            })
+            ->exists();
     }
 
     protected function isCancellableMoreThanFourHoursAway(Slot $slot): bool

@@ -4,12 +4,17 @@ namespace Tests\Feature;
 
 use App\Enums\AppointmentStatus;
 use App\Enums\SlotStatus;
+use App\Events\AppointmentBooked;
+use App\Events\AppointmentCancelled;
 use App\Exceptions\BusinessRuleException;
+use App\Listeners\SendBookingConfirmationEmail;
+use App\Models\AuditLog;
 use App\Models\Appointment;
 use App\Models\Clinic;
 use App\Models\Patient;
 use App\Models\Slot;
 use App\Services\AppointmentService;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
@@ -29,6 +34,8 @@ class AppointmentBookingTest extends TestCase
 
     public function test_it_books_an_available_slot_and_marks_it_booked(): void
     {
+        Event::fake([AppointmentBooked::class, AppointmentCancelled::class]);
+
         $patient = Patient::factory()->create();
         $slot = Slot::factory()->forDoctor($this->createDoctor()->id)->create([
             'date' => now()->addDay()->toDateString(),
@@ -57,6 +64,8 @@ class AppointmentBookingTest extends TestCase
             'id' => $slot->id,
             'status' => SlotStatus::Booked->value,
         ]);
+
+        Event::assertDispatched(AppointmentBooked::class);
     }
 
     public function test_it_rejects_double_booking_for_the_same_slot(): void
@@ -174,10 +183,101 @@ class AppointmentBookingTest extends TestCase
         ])
             ->assertStatus(422)
             ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
-            ->assertJsonPath('error.message', 'The patient has exceeded the maximum of 3 appointments in 24 hours.');
+            ->assertJsonPath('error.message', 'The patient already has the maximum of 3 upcoming appointments.');
 
         $this->assertDatabaseCount('appointments', 3);
         Carbon::setTestNow();
+    }
+
+    public function test_it_rejects_booking_when_patient_has_an_overlapping_appointment(): void
+    {
+        $doctor = $this->createDoctor();
+        $otherDoctor = $this->createDoctor();
+        $patient = Patient::factory()->create();
+
+        $existingSlot = Slot::factory()->forDoctor($doctor->id)->create([
+            'date' => now()->addDay()->toDateString(),
+            'start_time' => '10:00:00',
+            'end_time' => '10:30:00',
+            'duration' => 30,
+            'status' => SlotStatus::Booked,
+        ]);
+
+        Appointment::factory()->create([
+            'patient_id' => $patient->id,
+            'slot_id' => $existingSlot->id,
+            'status' => AppointmentStatus::Confirmed,
+        ]);
+
+        $overlappingSlot = Slot::factory()->forDoctor($otherDoctor->id)->create([
+            'date' => now()->addDay()->toDateString(),
+            'start_time' => '10:15:00',
+            'end_time' => '10:45:00',
+            'duration' => 30,
+            'status' => SlotStatus::Available,
+        ]);
+
+        $this->postJson(route('api.appointments.store'), [
+            'patient_id' => $patient->id,
+            'slot_id' => $overlappingSlot->id,
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'BUSINESS_RULE_VIOLATION')
+            ->assertJsonPath('error.message', 'The patient already has an overlapping appointment.');
+    }
+
+    public function test_it_dispatches_cancellation_side_effects_and_releases_the_slot(): void
+    {
+        Event::fake([AppointmentBooked::class, AppointmentCancelled::class]);
+
+        $doctor = $this->createDoctor();
+        $patient = Patient::factory()->create();
+        $slot = Slot::factory()->forDoctor($doctor->id)->create([
+            'date' => now()->addDay()->toDateString(),
+            'start_time' => '18:00:00',
+            'end_time' => '18:30:00',
+            'status' => SlotStatus::Booked,
+        ]);
+
+        $appointment = Appointment::factory()->create([
+            'patient_id' => $patient->id,
+            'slot_id' => $slot->id,
+            'status' => AppointmentStatus::Confirmed,
+        ]);
+
+        $this->patchJson(route('api.appointments.cancel', $appointment->id))
+            ->assertOk()
+            ->assertJsonPath('data.status', AppointmentStatus::Cancelled->value);
+
+        $this->assertDatabaseHas('slots', [
+            'id' => $slot->id,
+            'status' => SlotStatus::Available->value,
+        ]);
+
+        Event::assertDispatched(AppointmentCancelled::class);
+    }
+
+    public function test_event_listeners_create_audit_logs_and_email_listener_is_queued(): void
+    {
+        $this->assertTrue(in_array(\Illuminate\Contracts\Queue\ShouldQueue::class, class_implements(SendBookingConfirmationEmail::class), true));
+
+        $patient = Patient::factory()->create();
+        $slot = Slot::factory()->forDoctor($this->createDoctor()->id)->create([
+            'date' => now()->addDay()->toDateString(),
+            'status' => SlotStatus::Available,
+        ]);
+
+        $appointment = app(AppointmentService::class)->book($patient->id, $slot->id);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'appointment.booked',
+        ]);
+
+        app(AppointmentService::class)->cancel($appointment->id);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'appointment.cancelled',
+        ]);
     }
 
     public function test_it_does_not_count_completed_or_cancelled_appointments_toward_the_24_hour_booking_limit(): void
